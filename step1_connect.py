@@ -5,11 +5,10 @@ This does nothing to your sim. It only reads. It is the smallest possible test
 of the one thing the whole project depends on.
 
 HOW TO RUN
-  1. Install Python 3 from python.org. Tick "Add Python to PATH" during install.
-  2. Open Command Prompt and run:   pip install SimConnect
-  3. Start MSFS 2024 and get into a flight (any aircraft, sat on the ground is fine).
-  4. Run:   python step1_connect.py
-  5. Copy everything it prints and send it to me.
+  Put this file and RUN_ME.bat in the same folder, start MSFS 2024, get into a
+  flight, then double-click RUN_ME.bat. It does everything else.
+
+  It writes result.txt next to itself. Send me that file.
 
 WHAT I NEED TO KNOW
   Whether it connects, and which of the values come back as real numbers rather
@@ -23,12 +22,39 @@ with a Python error, send me that too, errors are the most useful thing of all.
 import sys
 import time
 
+# Everything printed also lands in result.txt, so the whole run can be sent as
+# one file instead of being copied out of a console window by hand.
+LOGFILE = 'result.txt'
+
+
+class Tee(object):
+    def __init__(self, stream, path):
+        self.stream = stream
+        self.fh = open(path, 'w', encoding='utf-8', errors='replace')
+
+    def write(self, s):
+        self.stream.write(s)
+        self.stream.flush()
+        self.fh.write(s)
+        self.fh.flush()
+
+    def flush(self):
+        self.stream.flush()
+        self.fh.flush()
+
+
+try:
+    sys.stdout = Tee(sys.stdout, LOGFILE)
+except Exception:
+    pass          # if the log cannot be opened, carry on printing to screen
+
 # ---------------------------------------------------------------- imports
 try:
     from SimConnect import SimConnect, AircraftRequests
 except ImportError:
     print('\nThe SimConnect library is not installed.')
-    print('Open Command Prompt and run:   pip install SimConnect\n')
+    print('RUN_ME.bat should have installed it, so that step must have failed.')
+    print('Send me result.txt and I will sort it.\n')
     sys.exit(1)
 
 
@@ -133,7 +159,8 @@ def main():
     except KeyboardInterrupt:
         print('\nStopped.')
 
-    print('\nDone. Copy everything above and send it to me.')
+    print('\nDone. A file called result.txt has been saved next to this script.')
+    print('Just send me that file. No need to copy anything.')
     sm.exit()
 
 
