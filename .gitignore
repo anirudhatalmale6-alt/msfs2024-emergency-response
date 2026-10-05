@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
 result.txt
+result2.txt
+EmergencyResponse_Step*.zip
