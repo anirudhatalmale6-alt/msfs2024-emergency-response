@@ -63,7 +63,26 @@ INTEREST = [
     ('VEHICLE',   ('veh_', 'truck', 'car', 'van', 'bus', 'vehicle')),
 ]
 
-TITLE_RE = re.compile(r'^\s*title\s*=\s*"?(.+?)"?\s*$', re.IGNORECASE)
+# Real cfg lines look like any of these:
+#     title = "Veh_Something"
+#     title = "Veh_Something" ; Variation name
+#     title=Veh_Something
+# The first version of this kept the closing quote AND the trailing comment, so
+# two thirds of the names came out as 'Veh_Something" ; Variation name' and
+# could never spawn. Quoted form is matched first, and only then the bare form
+# with anything after a ';' thrown away.
+TITLE_QUOTED = re.compile(r'^\s*title\s*=\s*"([^"]*)"', re.IGNORECASE)
+TITLE_BARE = re.compile(r'^\s*title\s*=\s*([^;"]+)', re.IGNORECASE)
+
+
+def parse_title(line):
+    m = TITLE_QUOTED.match(line)
+    if m:
+        return m.group(1).strip()
+    m = TITLE_BARE.match(line)
+    if m:
+        return m.group(1).strip()
+    return None
 
 
 def user_cfg_paths():
@@ -120,16 +139,22 @@ def scan(roots):
                 full = os.path.join(dirpath, fn)
                 try:
                     for line in open(full, 'r', errors='replace'):
-                        m = TITLE_RE.match(line)
-                        if m:
-                            t = m.group(1).strip()
-                            if t and t not in titles:
-                                titles[t] = full
+                        t = parse_title(line)
+                        if t and t not in titles:
+                            titles[t] = full
                 except Exception:
                     pass
     print('  read %d cfg files in %.0f s -> %d distinct titles'
           % (files, time.time() - t0, len(titles)))
     return titles
+
+
+NOISE = ('fsltl', 'fs_traffic', '_stub')
+
+
+def is_noise(t):
+    low = t.lower()
+    return any(n in low for n in NOISE)
 
 
 def categorise(titles):
@@ -138,7 +163,7 @@ def categorise(titles):
     for label, words in INTEREST:
         hits = []
         for t in sorted(titles):
-            if t in used:
+            if t in used or is_noise(t):
                 continue
             low = t.lower()
             if any(w in low for w in words):
@@ -183,7 +208,7 @@ def main():
             print('    %s' % t)
         if len(hits) > 25:
             print('    ... and %d more' % (len(hits) - 25))
-        candidates.extend(hits[:6])
+        candidates.extend(hits[:10])
 
     if not candidates:
         print('\nNothing obviously emergency-related. The full list is in')
@@ -192,7 +217,7 @@ def main():
 
     # ---- try spawning the best of them -------------------------------
     print('\n' + '-' * 64)
-    print('TRYING TO SPAWN THE BEST %d' % min(len(candidates), 18))
+    print('TRYING TO SPAWN THE BEST %d' % min(len(candidates), 32))
     print('-' * 64)
     try:
         from SimConnect import SimConnect, AircraftRequests
@@ -229,7 +254,7 @@ def main():
         return
 
     worked = []
-    for name in candidates[:18]:
+    for name in candidates[:32]:
         os.environ.pop('SIMCONNECT_OBJECT_ID', None)
         before = len(col.msgs)
         try:
@@ -251,7 +276,7 @@ def main():
             why = '; '.join(col.msgs[before:]) or 'no id came back'
             print('  no        %-44s %s' % (name[:44], why))
 
-    print('\n%d of %d spawned.' % (len(worked), min(len(candidates), 18)))
+    print('\n%d of %d spawned.' % (len(worked), min(len(candidates), 32)))
     if worked:
         print('\nTHESE WORK - this is what I needed:')
         for w in worked:
