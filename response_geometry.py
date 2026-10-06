@@ -68,12 +68,22 @@ class Aircraft:
 FORMATIONS = {
     'fire':     [(-45.0, 1.30), (45.0, 1.30), (180.0, 1.20)],
     'medical':  [(-78.0, 0.42)],
-    'police':   [(-35.0, 1.40), (35.0, 1.40), (145.0, 1.30), (215.0, 1.30)],
+    # Police were standing off at 1.40 radii - about 47 m on an A350, which
+    # read as "driving past and parking miles away". They should be up at the
+    # aircraft like the ambulance: two on the door side, one off the nose.
+    # Angles spread ~70 deg apart: on a small airframe the close-in floor
+    # collapses them all to the same radius, so the ANGLE is what stops them
+    # bunching into each other. Caught by the spacing test on an A320.
+    'police':   [(-45.0, 0.55), (-115.0, 0.50), (175.0, 0.60)],
     'standby':  [(-60.0, 1.80), (60.0, 1.80)],
 }
 
-# The ambulance is allowed inside the aircraft's circle; the others are not.
-CLOSE_IN = {'medical'}
+# Services allowed inside the aircraft's circle, because they attend the
+# aircraft itself rather than standing clear of it.
+CLOSE_IN = {'medical', 'police'}
+
+# A close-in vehicle still must not end up inside the fuselage.
+MIN_CLOSE_M = 10.0
 
 MIN_MARGIN_M = 8.0          # never closer than this to the aircraft skin
 
@@ -113,6 +123,8 @@ def park_spots(ac, service):
             # tiny radius is still too close. NOT a licence for a bad table -
             # validate_formations() catches that case separately.
             dist = max(dist, ac.radius + MIN_MARGIN_M)
+        else:
+            dist = max(dist, MIN_CLOSE_M)
         brg = (ac.heading + rel) % 360
         lat, lon = destination(ac.lat, ac.lon, brg, dist)
         facing = (brg + 180.0) % 360        # look back at the aircraft

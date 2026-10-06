@@ -31,7 +31,8 @@ class FakeSim(object):
         return self.vals.get(name, default if default is not None else 0)
 
 
-SQ = {'2000': 8192, '7700': 30464, '7500': 29952, '7600': 30208}
+SQ = {'2000': 8192, '7700': 30464, '7500': 29952, '7600': 30208,
+      '7777': 30583}
 
 CASES = [
     ('parked, nothing wrong',
@@ -57,6 +58,11 @@ CASES = [
     ('7700 + fuel at 6% -> still MEDICAL',
      dict(TRANSPONDER_CODE=SQ['7700'], FUEL_TOTAL_CAPACITY=1000,
           FUEL_TOTAL_QUANTITY=60), 'medical'),
+    ('squawk 7777 -> FIRE (manual test hook)',
+     dict(TRANSPONDER_CODE=SQ['7777']), 'fire'),
+    ('7777 outranks a healthy 7700 reading',
+     dict(TRANSPONDER_CODE=SQ['7777'], FUEL_TOTAL_CAPACITY=1000,
+          FUEL_TOTAL_QUANTITY=900), 'fire'),
     ('7600 radio failure is NOT an emergency response',
      dict(TRANSPONDER_CODE=SQ['7600']), None),
     ('no fuel data at all must not divide by zero',

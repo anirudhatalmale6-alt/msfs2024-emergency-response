@@ -1,5 +1,5 @@
 """
-EMERGENCY LANDING RESPONSE SYSTEM - v2
+EMERGENCY LANDING RESPONSE SYSTEM - v3
 
 Declare an emergency, land, and the right emergency services come and meet you.
 
@@ -63,8 +63,9 @@ except ImportError as e:
 from response_geometry import (destination, distance_m, bearing_deg,
                                Aircraft, park_spots, Vehicle)
 
-TICK = 0.1                       # 10 Hz. Plenty for a driving vehicle, and far
-                                 # below frame rate, so it costs the sim nothing.
+TICK = 0.04                      # 25 Hz position writes. The stutter was not
+                                 # the sim struggling - it was us updating too
+                                 # slowly, so each vehicle visibly jumped.
 SPAWN_DISTANCE_M = 260.0         # far enough not to pop into view, close enough
                                  # that it arrives while you are still watching
 CLASSIFY_EVERY = 1.0             # seconds between re-reading the emergency state
@@ -157,6 +158,15 @@ class Sim(object):
                 return int(oid), 'ok'
         return None, '; '.join(self.col.msgs[mark:]) or 'no id returned'
 
+    def remove(self, oid):
+        """Delete a spawned object. The wrapper does not expose this, but the
+        underlying DLL signature is declared, so call it directly."""
+        try:
+            return self.sm.IsHR(self.sm.dll.AIRemoveObject(
+                self.sm.hSimConnect, int(oid), self.sm.new_request_id().value), 0)
+        except Exception:
+            return False
+
     def move(self, oid, lat, lon, alt, hdg):
         vals = (ctypes.c_double * 4)(float(lat), float(lon), float(alt), float(hdg))
         return self.sm.IsHR(self.sm.dll.SetDataOnSimObject(
@@ -184,6 +194,8 @@ def classify(sim):
     squawk = decode_squawk(sim.get('TRANSPONDER_CODE:1'))
     fire = any(sim.get('ENG_ON_FIRE:%d' % i, 0) for i in (1, 2, 3, 4))
 
+    if squawk == '7777':
+        return 'fire', 'squawk 7777 - manual fire test'
     if squawk == '7500':
         return 'police', 'squawk 7500 - unlawful interference'
     if fire:
@@ -199,7 +211,7 @@ def classify(sim):
 
 def main():
     print('=' * 66)
-    print(' EMERGENCY LANDING RESPONSE SYSTEM  v2')
+    print(' EMERGENCY LANDING RESPONSE SYSTEM  v3')
     print('=' * 66)
 
     try:
@@ -231,6 +243,8 @@ def main():
     last_classify = 0.0
     last_tick = time.time()
     ground_ft = 0.0
+    lat = lon = None
+    hdg = gs = on_gnd = 0
 
     try:
         while True:
@@ -241,15 +255,20 @@ def main():
             dt = min(0.5, max(0.01, t - last_tick))
             last_tick = t
 
-            lat = sim.get('PLANE_LATITUDE')
-            lon = sim.get('PLANE_LONGITUDE')
-            hdg = sim.get('PLANE_HEADING_DEGREES_TRUE', 0)
-            gs = sim.get('GROUND_VELOCITY', 0) or 0
-            on_gnd = sim.get('SIM_ON_GROUND', 0)
-
-            if lat is None:
-                time.sleep(0.5)
-                continue
+            # Once units are rolling the aircraft is parked, so re-reading its
+            # position 25 times a second buys nothing and each read blocks.
+            # Skipping them is what makes the driving smooth rather than jerky.
+            if state in ('responding', 'on_scene'):
+                pass
+            else:
+                lat = sim.get('PLANE_LATITUDE')
+                lon = sim.get('PLANE_LONGITUDE')
+                hdg = sim.get('PLANE_HEADING_DEGREES_TRUE', 0)
+                gs = sim.get('GROUND_VELOCITY', 0) or 0
+                on_gnd = sim.get('SIM_ON_GROUND', 0)
+                if lat is None:
+                    time.sleep(0.5)
+                    continue
 
             # Reading the emergency state costs ~7 blocking reads, so do it once
             # a second rather than ten times, and keep the driving smooth.
@@ -265,6 +284,8 @@ def main():
             if state in ('responding', 'on_scene') and now_kind and now_kind != kind:
                 print('\nEmergency changed: %s -> %s. Re-dispatching.\n'
                       % (kind, now_kind))
+                for r in live:
+                    sim.remove(r.oid)
                 live = []
                 kind, why = now_kind, now_why
                 state = 'declared'
@@ -335,7 +356,10 @@ def main():
                 for r in live:
                     sim.move(r.oid, r.veh.lat, r.veh.lon, ground_ft, r.tgt_face)
                 if now_kind is None:
-                    print('Emergency cleared. Units released.\n')
+                    print('Emergency cleared. Units standing down.')
+                    for r in live:
+                        sim.remove(r.oid)
+                    print('%d unit(s) removed.\n' % len(live))
                     live = []
                     state = 'watching'
 
@@ -346,10 +370,12 @@ def main():
                     far = '  nearest %.0f m' % min(
                         distance_m(r.veh.lat, r.veh.lon, r.tgt_lat, r.tgt_lon)
                         for r in live)
-                print('  [%s] squawk %s  %s  %.0f kt   %d unit(s)%s'
+                fires = [sim.get('ENG_ON_FIRE:%d' % i, 0) for i in (1, 2)]
+                print('  [%s] squawk %s  %s  %.0f kt   %d unit(s)%s  fire=%s'
                       % (state, decode_squawk(sim.get('TRANSPONDER_CODE:1')),
                          'on ground' if on_gnd else 'airborne',
-                         gs * 1.94384, len(live), far))
+                         gs * 1.94384, len(live), far,
+                         ','.join('%g' % f for f in fires)))
 
             time.sleep(TICK)
 

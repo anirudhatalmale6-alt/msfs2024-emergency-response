@@ -83,11 +83,23 @@ for service, spots in ((s, park_spots(AC, s)) for s in FORMATIONS):
               abs(rel_bearing(facing, want)) < 0.5,
               'facing %.2f, aircraft is at %.2f' % (facing, want))
 
-        if service in ('fire', 'police', 'standby'):
+        if service in ('fire', 'standby'):
             check('%s[%d] clears the airframe' % (service, i),
                   clears_airframe(AC, la, lo),
                   'only %.1f m out, need %.1f'
                   % (d, AC.radius + MIN_MARGIN_M))
+
+# Close-in services attend the aircraft itself. They may be inside its circle,
+# but never inside the fuselage, and never parked so far out that they read as
+# "driving past and stopping miles away" - which is what police did at 1.40.
+from response_geometry import MIN_CLOSE_M
+for service in ('medical', 'police'):
+    for i, (la, lo, _) in enumerate(park_spots(AC, service)):
+        d = distance_m(AC.lat, AC.lon, la, lo)
+        check('%s[%d] not inside the fuselage' % (service, i), d >= MIN_CLOSE_M - 1e-6,
+              'only %.1f m from centre' % d)
+        check('%s[%d] is up at the aircraft, not standing off' % (service, i),
+              d <= AC.radius, '%.1f m out, radius is %.1f' % (d, AC.radius))
 
 # The ambulance is the deliberate exception - it comes in close, but it must be
 # at the FORWARD door, never under a wing.
