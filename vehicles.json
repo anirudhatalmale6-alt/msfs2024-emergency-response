@@ -1,0 +1,12 @@
+{
+  "_comment": "Object titles confirmed spawnable on MSFS 2024 (verified 2026-10-06, 30/30). Edit this file to swap in different packs - nothing in the code needs changing. Names must match a 'title=' in a sim.cfg exactly.",
+  "_source": "H145 Action Pack Vehicles UK, flightsim.to/addon/42197",
+
+  "fire":    ["UK Fire Truck 1"],
+  "medical": ["UK Ambulance 1", "UK Ambulance 2"],
+  "police":  ["UK Police Car 1", "UK Police Car 2", "UK Police SUV 1"],
+  "standby": ["UK Fire Truck 1"],
+
+  "_fire_effect_note": "'Fire with Light 1/2/3' also spawn. Those are fire effects rather than vehicles - candidates for putting flames on the aircraft later.",
+  "fire_effect": ["Fire with Light 1", "Fire with Light 2", "Fire with Light 3"]
+}
