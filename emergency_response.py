@@ -1,5 +1,5 @@
 """
-EMERGENCY LANDING RESPONSE SYSTEM - v1
+EMERGENCY LANDING RESPONSE SYSTEM - v2
 
 Declare an emergency, land, and the right emergency services come and meet you.
 
@@ -65,7 +65,9 @@ from response_geometry import (destination, distance_m, bearing_deg,
 
 TICK = 0.1                       # 10 Hz. Plenty for a driving vehicle, and far
                                  # below frame rate, so it costs the sim nothing.
-SPAWN_DISTANCE_M = 450.0         # far enough to be out of sight when it appears
+SPAWN_DISTANCE_M = 260.0         # far enough not to pop into view, close enough
+                                 # that it arrives while you are still watching
+CLASSIFY_EVERY = 1.0             # seconds between re-reading the emergency state
 
 
 def load_vehicles(path='vehicles.json'):
@@ -120,6 +122,22 @@ class Sim(object):
                 SIMCONNECT_DATATYPE.SIMCONNECT_DATATYPE_FLOAT64, 0,
                 SIMCONNECT_UNUSED)
         return did
+
+    def ground_elevation_ft(self):
+        """Terrain height under the aircraft, in feet.
+
+        v1 wrote the AIRCRAFT's altitude onto the vehicles. On an A350 the
+        aircraft datum sits several metres above the tarmac, so every vehicle
+        was planted in mid-air and then fell - which is exactly what the
+        ambulance was seen doing. What a ground vehicle wants is the ground.
+        """
+        alt = self.get('PLANE_ALTITUDE')
+        agl = self.get('PLANE_ALT_ABOVE_GROUND')
+        if alt is None:
+            return 0.0
+        if agl is None:
+            return float(alt)
+        return float(alt) - float(agl)
 
     def spawn(self, title, lat, lon, hdg):
         """One at a time: the library keeps the assigned id in a single global
@@ -181,7 +199,7 @@ def classify(sim):
 
 def main():
     print('=' * 66)
-    print(' EMERGENCY LANDING RESPONSE SYSTEM  v1')
+    print(' EMERGENCY LANDING RESPONSE SYSTEM  v2')
     print('=' * 66)
 
     try:
@@ -210,13 +228,21 @@ def main():
     kind = why = None
     live = []
     last_print = 0.0
+    last_classify = 0.0
+    last_tick = time.time()
+    ground_ft = 0.0
 
     try:
         while True:
             t = time.time()
+            # Real elapsed time, not the nominal tick. Each simvar read blocks,
+            # so a tick can take two or three times as long as asked for. v1
+            # assumed 0.1 s had passed and the vehicles crawled as a result.
+            dt = min(0.5, max(0.01, t - last_tick))
+            last_tick = t
+
             lat = sim.get('PLANE_LATITUDE')
             lon = sim.get('PLANE_LONGITUDE')
-            alt = sim.get('PLANE_ALTITUDE', 0)
             hdg = sim.get('PLANE_HEADING_DEGREES_TRUE', 0)
             gs = sim.get('GROUND_VELOCITY', 0) or 0
             on_gnd = sim.get('SIM_ON_GROUND', 0)
@@ -225,8 +251,26 @@ def main():
                 time.sleep(0.5)
                 continue
 
+            # Reading the emergency state costs ~7 blocking reads, so do it once
+            # a second rather than ten times, and keep the driving smooth.
+            if t - last_classify > CLASSIFY_EVERY:
+                last_classify = t
+                now_kind, now_why = classify(sim)
+            else:
+                now_kind, now_why = kind, why
+
+            # If the emergency CHANGES while units are out - 7700 then 7500 -
+            # v1 ignored it completely and the police never came. Release and
+            # re-dispatch for the new one.
+            if state in ('responding', 'on_scene') and now_kind and now_kind != kind:
+                print('\nEmergency changed: %s -> %s. Re-dispatching.\n'
+                      % (kind, now_kind))
+                live = []
+                kind, why = now_kind, now_why
+                state = 'declared'
+
             if state == 'watching':
-                kind, why = classify(sim)
+                kind, why = now_kind, now_why
                 if kind:
                     state = 'declared'
                     print('\n' + '!' * 66)
@@ -243,7 +287,10 @@ def main():
             elif state == 'declared':
                 # wait until actually stopped on the ground
                 if on_gnd and gs < 1.0:
+                    ground_ft = sim.ground_elevation_ft()
                     print('Aircraft stopped. Scrambling %s.' % kind)
+                    print('  ground elevation %.0f ft (aircraft reads %.0f ft)'
+                          % (ground_ft, sim.get('PLANE_ALTITUDE', 0) or 0))
                     span = sim.get('WING_SPAN', 36.0) or 36.0
                     length = span * 1.05
                     ac = Aircraft(lat, lon, hdg, span, length)
@@ -273,9 +320,9 @@ def main():
 
             elif state == 'responding':
                 for r in live:
-                    r.veh.step(TICK, r.tgt_lat, r.tgt_lon)
+                    r.veh.step(dt, r.tgt_lat, r.tgt_lon)
                     h = r.tgt_face if r.veh.arrived else r.veh.heading
-                    sim.move(r.oid, r.veh.lat, r.veh.lon, alt, h)
+                    sim.move(r.oid, r.veh.lat, r.veh.lon, ground_ft, h)
                     if r.veh.arrived and not r.reported:
                         r.reported = True
                         print('  %s on scene.' % r.title)
@@ -286,19 +333,23 @@ def main():
 
             elif state == 'on_scene':
                 for r in live:
-                    sim.move(r.oid, r.veh.lat, r.veh.lon, alt, r.tgt_face)
-                k2, _ = classify(sim)
-                if k2 is None:
+                    sim.move(r.oid, r.veh.lat, r.veh.lon, ground_ft, r.tgt_face)
+                if now_kind is None:
                     print('Emergency cleared. Units released.\n')
                     live = []
                     state = 'watching'
 
             if t - last_print > 5.0:
                 last_print = t
-                print('  [%s] squawk %s  %s  %.0f kt   %d unit(s)'
+                far = ''
+                if live:
+                    far = '  nearest %.0f m' % min(
+                        distance_m(r.veh.lat, r.veh.lon, r.tgt_lat, r.tgt_lon)
+                        for r in live)
+                print('  [%s] squawk %s  %s  %.0f kt   %d unit(s)%s'
                       % (state, decode_squawk(sim.get('TRANSPONDER_CODE:1')),
                          'on ground' if on_gnd else 'airborne',
-                         gs * 1.94384, len(live)))
+                         gs * 1.94384, len(live), far))
 
             time.sleep(TICK)
 
